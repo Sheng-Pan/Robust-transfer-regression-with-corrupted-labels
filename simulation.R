@@ -27,11 +27,11 @@ for(u in 1:10){
     ###############################
     # ptm <- Sys.time()
     ptm <- Sys.time()
-    s <- 12           # 稀疏度
-    p <- 400          # 信号长度
-    n <- 100          # 测量数量
-    alpha <- 1        # α-stable噪声的尾部参数
-    sigma <- 0.01     # 噪声尺度参数
+    s <- 12           
+    p <- 400          
+    n <- 100          
+    alpha <- 1       
+    sigma <- 0.01    
     gdata = generate_target_data(m,n,p,s,sigma,k)
     X0 = Phi = gdata$X
     y0 = gdata$y
@@ -41,11 +41,11 @@ for(u in 1:10){
     ###############################
     #generate source data
     ###############################
-    # 创建辅助数据集的函数
+ 
     e=8
     L = 20
     auxiliary_data <- lapply(seq_len(L), function(i) create_auxiliary_data(m+i,8,n,p))
-    # 安全地提取 X 和 y
+  
     get_X_safe <- function(data_list, component_name) {
       if (!is.null(data_list) && is.list(data_list) && component_name %in% names(data_list)) {
         return(data_list[[component_name]])
@@ -54,7 +54,7 @@ for(u in 1:10){
       }
     }
     
-    # 提取所有辅助数据集中的 X 和 y
+
     Xs <- lapply(auxiliary_data, get_X_safe, component_name = "X")
     ys <- lapply(auxiliary_data, get_X_safe, component_name = "y")
     signal <- lapply(auxiliary_data, get_X_safe, component_name = "signal")
@@ -83,6 +83,7 @@ for(u in 1:10){
     # #tran-lasso(Li)
     # ###############################
     # ###generate the data
+    ## The following code of tran-lasso(Li) is adapted from  https://github.com/saili0103/TransLasso
     X <- NULL
     y <- NULL
     X = rbind(X, Phi)

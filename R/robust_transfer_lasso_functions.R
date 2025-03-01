@@ -179,14 +179,14 @@ Rlasso <- function(y0, Phi, tau_x, tau_r,method, rho=1, max_iter = 20, tol = 1e-
   }
   
   return(list(x=x, r=r))}else if(method == 'PDIPM'){
-    n = dim(x0)[1]
-    p = dim(x0)[2]
-    x <- Variable(p)
-    r <- Variable(n)
+    n0 <- length(y0)
+    p0 <- ncol(Phi)
+    x <- Variable(p0)
+    r <- Variable(n0)
     
     #
     
-    objective <- (1/2) * sum((y0 - x0 %*% x - r)^2) + tau_x * sum(abs(x))+ tau_r* sum(abs(r))
+    objective <- (1/2) * sum((y0 - Phi %*% x - r)^2) + tau_x * sum(abs(x))+ tau_r* sum(abs(r))
     
     # 
     problem <- Problem(Minimize(objective))

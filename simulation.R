@@ -184,7 +184,7 @@ for(u in 1:10){
     for(j in 1:L){
       h0[j] = sum(abs(signal_true - signal[[j]]))
     }
-    Ah = intersect(order(h0)[1:10],intersect(which(h0<12),which(shat<15)))
+    Ah = intersect(order(h0),intersect(which(h0<12)))
     test_data = which.min(h0)
     w_hat_A0 = distributed_lasso(Xs, ys, Ah, max_iter = 40, rho = 0.1)
     lambda_beta_grid <- seq(cv_lambda[u,1]-0.01, cv_lambda[u,1], by = 0.005)

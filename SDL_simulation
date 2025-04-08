@@ -1,0 +1,319 @@
+library(glmnet)  
+library(CVXR)
+library(Rcpp)
+library(stabledist)
+setwd('scr')
+
+sourceCpp('RTL_admm_solver_cpp.cpp')
+sourceCpp('SDL_cpp.cpp')
+#simualtion for scenario 4
+N =200
+r_vector = seq(0.1,0.9,0.1)
+v1 = v2= v3=v4= v5=matrix(0,9,N)
+
+for(u in 1:9){
+  k0 = r_vector[u]
+  for(m in 1:N){
+    ###############################
+    #generate target dataset
+    ###############################
+    ptm <- Sys.time()
+    s <- 12           # 稀疏度
+    p <- 400          # 信号长度
+    n <- 100          # 测量数量
+    alpha <- 1        # α-stable噪声的尾部参数
+    sigma <- 0.1     # 噪声尺度参数
+    distr = 'xb'
+    rr = 0.3
+    sce = 4
+    gdata = generate_target_data2(m,sce,n,p,s,rr,sigma,k0,distr)
+    X0 = Phi = gdata$X
+    X0 = scale(X0)
+    y0 = gdata$y
+    signal_true = gdata$signal_true
+    nonzero_indices = gdata$non_zero_indices
+    
+    ###############################
+    #generate source data
+    ###############################
+    # 创建辅助数据集的函数
+    e=8
+    L = 20
+    auxiliary_data <- lapply(seq_len(L), function(i) create_auxiliary_data2(m+i,sce ,rr,sigma,8,n,p))
+    # 安全地提取 X 和 y
+    get_X_safe <- function(data_list, component_name) {
+      if (!is.null(data_list) && is.list(data_list) && component_name %in% names(data_list)) {
+        return(data_list[[component_name]])
+      } else {
+        stop(paste("Component", component_name, "not found in data list."))
+      }
+    }
+    
+    # 提取所有辅助数据集中的 X 和 y
+    Xs <- lapply(auxiliary_data, get_X_safe, component_name = "X")
+    ys <- lapply(auxiliary_data, get_X_safe, component_name = "y")
+    signal <- lapply(auxiliary_data, get_X_safe, component_name = "signal")
+    error <- unlist(lapply(auxiliary_data, get_X_safe, component_name = "error"))
+    # ###############################
+    # #distributed lasso on source data
+    # ###############################
+    n_subset = 5
+    subset_vol = n/n_subset
+    q = 1
+    alpha = 0.1
+    infl =  tryCatch({
+      
+      MIP(X0, y0,n,p,q,n_subset,subset_vol,ep=0.1,alpha)
+    }, error = function(e) {
+      
+      cat("Error occurred:", e$message, "\n")
+      return(NULL)
+    })
+    infl
+    v1[u,m] = length(infl)
+    # ###############################
+    # #distributed lasso on source data
+    # ###############################
+    w_hat_A = w_hat_A_debias = NULL
+    nv = rep(0,L)
+    for(j in 1:L){
+      cv.lasso <- cv.glmnet(Xs[[j]], ys[[j]], alpha=1)  # alpha=1 for Lasso
+      fit_w <- glmnet(Xs[[j]], ys[[j]], alpha = 1,lambda = cv.lasso$lambda.min)
+      w <- as.numeric(coef(fit_w)[-1])
+      w_hat_A <- cbind(w_hat_A,w)
+      nv[j] = mean((ys[[j]] - Xs[[j]]%*%w)^2)
+    }
+    nv = sqrt(mean(nv))
+    # ###############################
+    #robust lasso
+    ###############################
+    tau_x = 10*n*nv*sqrt((log(p)/n))
+    tau_r = 2*n*nv*sqrt((log(n)/n))
+    #method for rlasso: 'admm','cd','PDIPM'
+    method = 'ADMM'
+    result0 <- Rlasso(y0, X0, tau_x, tau_r, method,rho=0.1, max_iter = 40, tol = 1e-6)
+    rlasso = result0$x
+    r2 = sum(abs(result0$r)>0.2*sqrt(log(n)/n))
+    v2[u,m] = r2
+    
+    vec = rep(0,L)
+    for(j in 1:L){
+      vec[j] = sum(abs(rlasso - w_hat_A[,j]))
+    }
+    nv0 = which.min(vec)
+    v4[u,m] = sum(abs(signal[[nv0]] - signal_true))
+    v4[u,m] 
+    # ###############################
+    #L1
+    ###############################
+    # tau_x = 10*n*nv*sqrt((log(p)/n))
+    X <- NULL
+    y <- NULL
+    X = rbind(X, Phi)
+    y = c(y,y0)
+    n.vec <- c(n, rep(100, L))
+    for (j in 1:(L )) {
+      X <- rbind(X,Xs[[j]])
+      ind.k <- ind.set(n.vec, j)
+      y <- c(y, ys[[j]])
+    }
+    M= length(n.vec)-1
+    Rhat <- rep(0, M+1)
+    p<- ncol(X)
+    I.til = 1:50
+    n.vec[1]<- n.vec[1]-length(I.til)
+    ind.1<-ind.set(n.vec,1)
+    for(k in 2: (M+1)){
+      ind.k<-ind.set(n.vec,k)
+      Xty.k <- t(X[ind.k,])%*%y[ind.k]/n.vec[k] - t(X[ind.1,])%*%y[ind.1]/ n.vec[1]
+      margin.T<-sort(abs(Xty.k),decreasing=T)[1:round(n.vec[1]/3)]
+      Rhat[k] <-  sum(margin.T^2)
+    }
+   nv0 = which.min(Rhat)
+    v5[u,m] = sum(abs(signal[[nv0]] - signal_true))
+    v5[u,m] 
+    # ###############################
+    #robust lasso
+    ###############################
+    tau_x = 5*n*nv*sqrt((log(p)/n))
+    tau_r = n*nv*sqrt((log(n)/n))
+    # tau_x = sqrt((log(p)/n))
+    # tau_r = sqrt((log(n)/n))
+    result = tryCatch({
+      delta_estimationR(Xs, ys, tau_x, tau_r,w_hat_A,  X0,   y0,  L,  p,  n)
+      # delta_estimation(Xs, ys, tau_x, tau_r,w_hat_A,  X0,   y0,  L,  p,  n, 1, 40)
+    }, error = function(e) {
+
+      cat("Error occurred:", e$message, "\n")
+      return(NULL)
+    })
+    if(length(result$hhat)>0){
+      test_data = which.min(result$hhat)
+      v3[u,m] = sum(abs(signal[[test_data]] - signal_true))
+    }else{
+      v3[u,m] = 100
+    }
+
+    ptm2 <- Sys.time()
+    print(c(ptm2 - ptm,u,m, v3[u,m] ,  v4[u,m])) 
+    
+  }
+  
+  a = list(v1=v1,v2=v2,v3=v3,v4=v4,v5=v5)
+}
+#simulation for scenario 3
+N =200
+r_vector = seq(0.1,0.9,0.1)
+v1 = v2= v3=v4=v5= matrix(0,9,N)
+
+for(u in 1:9){
+  k0 = r_vector[u]
+  for(m in 1:N){
+    ###############################
+    #generate target dataset
+    ###############################
+    ptm <- Sys.time()
+    s <- 12          
+    p <- 400         
+    n <- 100         
+    sigma <- 1   
+    distr = 'xb'
+    rr = 0.5
+    sce = 3
+    gdata = generate_target_data2(m,sce,n,p,s,rr,sigma,k0,distr)
+    X0 = Phi = gdata$X
+    X0 = scale(X0)
+    y0 = gdata$y
+    signal_true = gdata$signal_true
+    nonzero_indices = gdata$non_zero_indices
+ 
+    ###############################
+    #generate source data
+    ###############################
+    # 创建辅助数据集的函数
+    e=8
+    L = 20
+    auxiliary_data <- lapply(seq_len(L), function(i) create_auxiliary_data2(m+i,sce,rr,sigma,8,n,p))
+    # 安全地提取 X 和 y
+    get_X_safe <- function(data_list, component_name) {
+      if (!is.null(data_list) && is.list(data_list) && component_name %in% names(data_list)) {
+        return(data_list[[component_name]])
+      } else {
+        stop(paste("Component", component_name, "not found in data list."))
+      }
+    }
+    
+    # 提取所有辅助数据集中的 X 和 y
+    Xs <- lapply(auxiliary_data, get_X_safe, component_name = "X")
+    ys <- lapply(auxiliary_data, get_X_safe, component_name = "y")
+    signal <- lapply(auxiliary_data, get_X_safe, component_name = "signal")
+    error <- unlist(lapply(auxiliary_data, get_X_safe, component_name = "error"))
+    # ###############################
+    # #distributed lasso on source data
+    # ###############################
+    # n_subset = 5
+    # subset_vol = n/n_subset
+    # q = 1
+    # alpha = 0.1
+    # infl =  tryCatch({
+    # 
+    #   MIP(X0, y0,n,p,q,n_subset,subset_vol,ep=0.1,alpha)
+    # }, error = function(e) {
+    # 
+    #   cat("Error occurred:", e$message, "\n")
+    #   return(NULL)
+    # })
+    # infl
+    # v1[u,m] = length(infl)
+    # ###############################
+    # #distributed lasso on source data
+    # ###############################
+    w_hat_A = w_hat_A_debias = NULL
+    nv = rep(0,L)
+    for(j in 1:L){
+      cv.lasso <- cv.glmnet(Xs[[j]], ys[[j]], alpha=1)  # alpha=1 for Lasso
+      fit_w <- glmnet(Xs[[j]], ys[[j]], alpha = 1,lambda = cv.lasso$lambda.min)
+      w <- as.numeric(coef(fit_w)[-1])
+      w_hat_A <- cbind(w_hat_A,w)
+      nv[j] = mean((ys[[j]] - Xs[[j]]%*%w)^2)
+    }
+    nv = sqrt(mean(nv))
+    # ###############################
+    #robust lasso
+    ###############################
+    tau_x = 10*n*nv*sqrt((log(p)/n))
+    tau_r = 2*n*nv*sqrt((log(n)/n))
+    #method for rlasso: 'admm','cd','PDIPM'
+    method = 'ADMM'
+    result0 <- Rlasso(y0, X0, tau_x, tau_r, method,rho=0.1, max_iter = 40, tol = 1e-6)
+    rlasso = result0$x
+    r2 = sum(abs(result0$r)>0.2*sqrt(log(n)/n))
+    v2[u,m] = r2
+    
+    vec = rep(0,L)
+    for(j in 1:L){
+      vec[j] = sum(abs(rlasso - w_hat_A[,j]))
+    }
+    nv0 = which.min(vec)
+    v4[u,m] = sum(abs(signal[[nv0]] - signal_true))
+    v4[u,m] 
+    # ###############################
+    #L1
+    ###############################
+    # tau_x = 10*n*nv*sqrt((log(p)/n))
+    X <- NULL
+    y <- NULL
+    X = rbind(X, Phi)
+    y = c(y,y0)
+    n.vec <- c(n, rep(100, L))
+    for (j in 1:(L )) {
+      X <- rbind(X,Xs[[j]])
+      ind.k <- ind.set(n.vec, j)
+      y <- c(y, ys[[j]])
+    }
+    M= length(n.vec)-1
+    Rhat <- rep(0, M+1)
+    p<- ncol(X)
+    I.til = 1:50
+    n.vec[1]<- n.vec[1]-length(I.til)
+    ind.1<-ind.set(n.vec,1)
+    for(k in 2: (M+1)){
+      ind.k<-ind.set(n.vec,k)
+      Xty.k <- t(X[ind.k,])%*%y[ind.k]/n.vec[k] - t(X[ind.1,])%*%y[ind.1]/ n.vec[1]
+      margin.T<-sort(abs(Xty.k),decreasing=T)[1:round(n.vec[1]/3)]
+      Rhat[k] <-  sum(margin.T^2)
+    }
+    nv0 = which.min(Rhat)
+    v5[u,m] = sum(abs(signal[[nv0]] - signal_true))
+    v5[u,m] 
+    # ###############################
+    #robust lasso
+    ###############################
+    tau_x = 5*n*nv*sqrt((log(p)/n))
+    tau_r = n*nv*sqrt((log(n)/n))
+    # tau_x = sqrt((log(p)/n))
+    # tau_r = sqrt((log(n)/n))
+    result = tryCatch({
+      delta_estimationR(Xs, ys, tau_x, tau_r,w_hat_A,  X0,   y0,  L,  p,  n)
+     # delta_estimation(Xs, ys, tau_x, tau_r,w_hat_A,  X0,   y0,  L,  p,  n, 1, 40)
+    }, error = function(e) {
+
+      cat("Error occurred:", e$message, "\n")
+      return(NULL)
+    })
+    if(length(result$hhat)>0){
+      test_data = which.min(result$hhat)
+      v3[u,m] = sum(abs(signal[[test_data]] - signal_true))
+    }else{
+      v3[u,m] = 100
+    }
+
+    ptm2 <- Sys.time()
+   print(c(ptm2 - ptm,u,m, v3[u,m] ,  v4[u,m])) 
+   
+  }
+  # a = list(v1=v1,v2=v2,v3=v3,v4=v4,v5=v5)
+  # name= paste0("SDL_xb",u,".rds")
+  # saveRDS(a,name)
+  
+}

@@ -80,22 +80,22 @@ List RTL_admm_solver_cpp(const arma::vec& y0, const arma::mat& X0, const arma::v
 
 
 // [[Rcpp::export]]
-List cv_RTL_cpp(arma::uvec folds,const arma::mat& X_test,const arma::vec& y_test , const arma::mat& X0, const arma::vec& y0, int r, int k0, int r2, const arma::vec& w_hat_A0, const arma::vec& lambda_beta_grid, const arma::vec& lambda_e_grid) {
+List cv_RTL_cpp(int core, arma::uvec folds,const arma::mat& X_test,const arma::vec& y_test , const arma::mat& X0, const arma::vec& y0, double ctilde, int r, int k0, int r2, const arma::vec& w_hat_A0, const arma::vec& lambda_beta_grid, const arma::vec& lambda_e_grid) {
   double best_score = datum::inf;
   List best_params = List::create(Named("lambda_beta") = NA_REAL, Named("lambda_e") = NA_REAL);
   
   // Define opf2 function
   std::function<double(const arma::vec&)> opf2;
   if (r2 > r) {
-   // arma::mat X_test = Xs[test_data];
-  //  arma::vec y_test = ys[test_data];
+    // arma::mat X_test = Xs[test_data];
+    //  arma::vec y_test = ys[test_data];
     opf2 = [&](const arma::vec& z) {
       double tau_x = z(0);
       double tau_r = z(1);
       List result1 = RTL_admm_solver_cpp(y0, X0, w_hat_A0, tau_x, tau_r, 0.1, 40, 1e-6);
       arma::vec beta_hat = as<arma::vec>(result1["beta_hat"]);
       double ab0 = mean(pow(y_test - X_test * beta_hat, 2));
-      double penalty = (sum(abs(beta_hat - w_hat_A0)) < 2) ? 10 : 0;
+      double penalty = (sum(abs(beta_hat - w_hat_A0)) < ctilde) ? 10 : 0;
       return ab0 + penalty;
     };
   } else {
@@ -120,6 +120,7 @@ List cv_RTL_cpp(arma::uvec folds,const arma::mat& X_test,const arma::vec& y_test
   }
   
   // Grid search over lambda_beta_grid and lambda_e_grid
+  omp_set_num_threads(core); // 设置线程数为4
 #pragma omp parallel for collapse(2)
   for (double lambda_beta : lambda_beta_grid) {
     for (double lambda_e : lambda_e_grid) {

@@ -75,7 +75,7 @@ List admm_lasso_cpp2(arma::mat X, arma::vec Y, double tau_x, double tau_r, doubl
 
 // [[Rcpp::export]]
 
-List delta_estimation(List Xs, List ys, arma::mat w_hat_A, arma::mat X0, arma::vec y0, int L, int p, int n, double rho = 0.1, int max_iter = 40) {
+List delta_estimation(List Xs, List ys, double tau_r, double tau_x, arma::mat w_hat_A, arma::mat X0, arma::vec y0, int L, int p, int n, double rho = 0.1, int max_iter = 40) {
   NumericVector hhat1(L);
   std::vector<arma::vec> delta; 
   
@@ -83,10 +83,6 @@ List delta_estimation(List Xs, List ys, arma::mat w_hat_A, arma::mat X0, arma::v
     arma::vec w_hat = w_hat_A.col(j);
     arma::mat X1 = join_cols(as<arma::mat>(Xs[j]), X0);
     arma::vec Y1 = join_cols(as<arma::vec>(ys[j]), y0);
-    
-    double tau_x = 2 * sqrt(log(p) / n);
-    double tau_r = sqrt(log(n) / n);
-    
     List q_result = admm_lasso_cpp2(X1, Y1, tau_x, tau_r, rho, max_iter);
     arma::vec q = q_result["q"];
     

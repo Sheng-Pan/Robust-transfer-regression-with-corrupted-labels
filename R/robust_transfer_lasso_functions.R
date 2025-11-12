@@ -1,6 +1,6 @@
 
 msefun = function(x,y){
-  sum(x-y)^2
+  norm(x-y,"2)^2
 }
 l1fun = function(x,y){
   sum(abs((x-y)))
